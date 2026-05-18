@@ -1,0 +1,34 @@
+-- 벡터 연산을 위한 pgvector 확장 설치 (한 번만 실행하면 됩니다)
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- 1. 유저 테이블 (t_user)
+CREATE TABLE t_user (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR NOT NULL UNIQUE, -- 유니크 제약 조건 권장
+    password VARCHAR NOT NULL,       -- 해싱된 비밀번호 저장용
+    profile_img VARCHAR,
+    created_dt TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_dt TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 2. 게시판 테이블 (t_board)
+CREATE TABLE t_board (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    title VARCHAR NOT NULL,
+    content TEXT NOT NULL,
+    
+    -- 벡터 컬럼: 차원(1536)은 사용하는 모델(OpenAI 등)에 맞춰 수정하세요.
+    -- 예: OpenAI text-embedding-3-small = 1536, BERT = 768
+    title_embedding vector(768),
+    content_embedding vector(768),
+    
+    created_dt TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_dt TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+
+    -- Foreign Key 제약 조건 (ON DELETE CASCADE 적용)
+    CONSTRAINT fk_board_user
+        FOREIGN KEY (user_id)
+        REFERENCES t_user(id)
+        ON DELETE CASCADE
+);
