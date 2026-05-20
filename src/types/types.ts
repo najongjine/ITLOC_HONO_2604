@@ -19,3 +19,12 @@ export interface ResultType {
   data?: any;
   msg?: string;
 }
+
+export type ChatMessageType = {
+  id: number;
+  roomId: string;
+  senderId: string;
+  receiverId: string;
+  text: string;
+  createdDt: string;
+};

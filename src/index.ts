@@ -2,7 +2,7 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { Pool } from "@neondatabase/serverless";
-import type { HonoEnv, ResultType } from "./types/types.js";
+import type { ChatMessageType, HonoEnv, ResultType } from "./types/types.js";
 import * as dotenv from "dotenv";
 import { dbMiddleware } from "./db/supabasevercel_db.js";
 import { openApiSpec } from "./openapi.js";
@@ -126,12 +126,24 @@ const io = new Server(httpServer, {
   },
 });
 
+// 임시 메모리 저장소
+// 서버 재시작하면 사라짐
+const chatMessages: ChatMessageType[] = [];
 /* 이벤트 기반 */
 io.on("connection", (socket) => {
   console.log(`[socket.io] connected:`, socket.id);
 
   socket.on("join_room", (data: { roomId: string; userId: string }) => {
     const { roomId, userId } = data;
+    socket.join(roomId);
+    console.log(`# socket, ${userId} join room ${roomId}`);
+    socket.emit("joined_room", { success: true, roomId, userId });
+  });
+
+  socket.on("get_messages", (data: { roomId: string }) => {
+    const { roomId } = data;
+    const roomMessages = chatMessages.filter((msg) => msg.roomId == roomId);
+    socket.emit(`message_list`, roomMessages);
   });
 
   socket.on("disconnect", () => {
