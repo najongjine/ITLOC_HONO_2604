@@ -41,6 +41,12 @@ router.post("/login_register", async (c) => {
     let email = String(body["email"] || "");
     let display_name = String(body["display_name"] || "");
     let photo_url = String(body["photo_url"] || "");
+
+    if (!firebase_uid) {
+      result.success = false;
+      result.msg = `firebase uid missing`;
+      return c.json(result);
+    }
     return c.json(result);
   } catch (error: any) {
     result.success = false;
