@@ -34,6 +34,13 @@ router.post("/login_register", async (c) => {
   let result: ResultType = { success: true };
   const db = c.var.db;
   try {
+    // formdata 로 온 데이터 받아 주는놈
+    const body = await c.req.parseBody({ all: true });
+    let provider = String(body["provider"] || "");
+    let firebase_uid = String(body["firebase_uid"] || "");
+    let email = String(body["email"] || "");
+    let display_name = String(body["display_name"] || "");
+    let photo_url = String(body["photo_url"] || "");
     return c.json(result);
   } catch (error: any) {
     result.success = false;
