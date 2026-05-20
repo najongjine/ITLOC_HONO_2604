@@ -129,6 +129,7 @@ const io = new Server(httpServer, {
 // 임시 메모리 저장소
 // 서버 재시작하면 사라짐
 const chatMessages: ChatMessageType[] = [];
+let messageId = 1;
 /* 이벤트 기반 */
 io.on("connection", (socket) => {
   console.log(`[socket.io] connected:`, socket.id);
@@ -145,6 +146,36 @@ io.on("connection", (socket) => {
     const roomMessages = chatMessages.filter((msg) => msg.roomId == roomId);
     socket.emit(`message_list`, roomMessages);
   });
+
+  socket.on(
+    "send_message",
+    (data: {
+      roomId: string;
+      senderId: string;
+      receiverId: string;
+      text: string;
+    }) => {
+      const { roomId, senderId, receiverId, text } = data;
+      if (!roomId || !senderId || !receiverId) {
+        socket.emit(`chat_error`, {
+          messages: "데이터들 잘못보냄",
+        });
+        return;
+      }
+      const newMessage: ChatMessageType = {
+        id: messageId++,
+        roomId,
+        senderId,
+        receiverId,
+        text: text.trim(),
+        createdDt: new Date().toISOString(),
+      };
+      chatMessages.push(newMessage);
+      console.log("# new message:", newMessage);
+      // 같은 방에 있는 모든 사람에게 메시지 전송
+      io.to(roomId).emit("receive_message", newMessage);
+    },
+  );
 
   socket.on("disconnect", () => {
     console.log(`socket disconnected:`, socket.id);
