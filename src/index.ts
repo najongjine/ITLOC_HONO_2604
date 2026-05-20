@@ -6,6 +6,7 @@ import type { HonoEnv, ResultType } from "./types/types.js";
 import * as dotenv from "dotenv";
 import { dbMiddleware } from "./db/supabasevercel_db.js";
 import { openApiSpec } from "./openapi.js";
+import { Server } from "socket.io";
 
 const envFile =
   process.env.NODE_ENV == "production" ? ".env.production" : ".env.development";
@@ -107,7 +108,7 @@ app.route("/api/embedding", embeddingRouter);
 
 await checkDatabaseConnection();
 
-serve(
+const httpServer = serve(
   {
     fetch: app.fetch,
     port: 3000,
@@ -116,3 +117,10 @@ serve(
     console.log(`Server is running on http://localhost:${info.port}`);
   },
 );
+
+const io = new Server(httpServer, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST", "UPDATE", "DELETE", "PUT"],
+  },
+});
