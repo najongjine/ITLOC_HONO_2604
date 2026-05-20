@@ -130,7 +130,8 @@ const io = new Server(httpServer, {
 // 서버 재시작하면 사라짐
 const chatMessages: ChatMessageType[] = [];
 let messageId = 1;
-/* 이벤트 기반 */
+/* 이벤트 기반 
+socket := 앱socket정보 */
 io.on("connection", (socket) => {
   console.log(`[socket.io] connected:`, socket.id);
 
