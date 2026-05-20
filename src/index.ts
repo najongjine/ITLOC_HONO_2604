@@ -118,6 +118,7 @@ const httpServer = serve(
   },
 );
 
+// 여기까지 오면 http, socket 2개다 작동하는 서버 구동 완료
 const io = new Server(httpServer, {
   cors: {
     origin: "*",
@@ -125,8 +126,13 @@ const io = new Server(httpServer, {
   },
 });
 
+/* 이벤트 기반 */
 io.on("connection", (socket) => {
   console.log(`[socket.io] connected:`, socket.id);
+
+  socket.on("join_room", (data: { roomId: string; userId: string }) => {
+    const { roomId, userId } = data;
+  });
 
   socket.on("disconnect", () => {
     console.log(`socket disconnected:`, socket.id);
