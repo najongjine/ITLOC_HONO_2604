@@ -124,3 +124,11 @@ const io = new Server(httpServer, {
     methods: ["GET", "POST", "UPDATE", "DELETE", "PUT"],
   },
 });
+
+io.on("connection", (socket) => {
+  console.log(`[socket.io] connected:`, socket.id);
+
+  socket.on("disconnect", () => {
+    console.log(`socket disconnected:`, socket.id);
+  });
+});
