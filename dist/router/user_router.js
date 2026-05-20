@@ -1,6 +1,27 @@
 import { Hono } from "hono";
-import { hashPassword, generateToken, comparePassword, } from "../utils/utils.js";
+import { generateToken } from "../utils/utils.js";
 const router = new Hono();
+const valueToString = (value) => {
+    if (value === undefined || value === null) {
+        return "";
+    }
+    if (Array.isArray(value)) {
+        return valueToString(value[0]);
+    }
+    if (value instanceof File) {
+        return "";
+    }
+    return String(value).trim();
+};
+const toIsoString = (value) => {
+    if (!value) {
+        return null;
+    }
+    if (value instanceof Date) {
+        return value.toISOString();
+    }
+    return String(value);
+};
 router.get("/db_select_test", async (c) => {
     let result = { success: true };
     const db = c.var.db;
@@ -17,100 +38,91 @@ router.get("/db_select_test", async (c) => {
         return c.json(result);
     }
 });
-router.get("/query_string", async (c) => {
+router.post("/login_register", async (c) => {
     let result = { success: true };
     const db = c.var.db;
     try {
-        let mydata = c.req.query("mydata");
-        let mydata2 = c.req.query("mydata2");
-        result.data = { mydata, mydata2 };
-        return c.json(result);
-    }
-    catch (error) {
-        result.success = false;
-        result.msg = `!error. ${error?.message}`;
-        return c.json(result);
-    }
-});
-router.post("/register", async (c) => {
-    let result = { success: true };
-    const db = c.var.db;
-    try {
-        const body = await c.req.parseBody({ all: true });
-        let username = String(body["username"] || "");
-        username = username?.trim() || "";
-        let password = String(body["password"] || "");
-        password = password?.trim() || "";
-        if (!username || !password) {
+        const contentType = c.req.header("content-type") || "";
+        const body = contentType.includes("application/json")
+            ? await c.req.json()
+            : await c.req.parseBody({ all: true });
+        const provider = valueToString(body["provider"]);
+        const firebase_uid = valueToString(body["firebase_uid"]);
+        const email = valueToString(body["email"]);
+        const display_name = valueToString(body["display_name"]);
+        const photo_url = valueToString(body["photo_url"]);
+        if (!firebase_uid) {
             result.success = false;
-            result.msg = "!error. username or password is required";
+            result.msg = "firebase uid missing";
             return c.json(result);
         }
-        let _data = await db.query(`
-        SELECT * FROM t_user WHERE username = $1;
-        `, [username]);
-        if (_data.rows.length > 0) {
+        if (!email) {
             result.success = false;
-            result.msg = "!error. username already exists";
+            result.msg = "email missing";
             return c.json(result);
         }
-        let encPassword = await hashPassword(password);
-        console.log(`password: `, password);
-        console.log(`encPassword: `, encPassword);
-        let _data2 = await db.query(`
-        INSERT INTO t_user (username, password) VALUES ($1, $2)
-        RETURNING *;
-        `, [username, encPassword]);
-        console.log(`_data2: `, _data2);
-        _data2 = _data2?.rows[0] || {};
-        _data2.password = "";
-        const token = `Bearer ${generateToken(_data2, "999d")}`;
-        console.log(`token: `, token);
-        result.data = { userInfo: _data2, token: token };
-        return c.json(result);
-    }
-    catch (error) {
-        result.success = false;
-        result.msg = `!error. ${error?.message}`;
-        return c.json(result);
-    }
-});
-/** username, password 가 맞으면 token 만들어서
- * register 의 응답 형식과 똑같이 해주면 되요
- */
-router.post("/login", async (c) => {
-    let result = { success: true };
-    const db = c.var.db;
-    try {
-        const body = await c.req.parseBody({ all: true });
-        let username = String(body["username"] || "");
-        username = username?.trim() || "";
-        let password = String(body["password"] || "");
-        password = password?.trim() || "";
-        if (!username || !password) {
+        const userResult = await db.query(`
+        INSERT INTO t_user (
+          firebase_uid,
+          email,
+          display_name,
+          photo_url,
+          provider,
+          last_login_at
+        )
+        VALUES (
+          $1,
+          $2,
+          NULLIF($3, ''),
+          NULLIF($4, ''),
+          COALESCE(NULLIF($5, ''), 'google'),
+          CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (firebase_uid)
+        DO UPDATE SET
+          email = EXCLUDED.email,
+          display_name = EXCLUDED.display_name,
+          photo_url = EXCLUDED.photo_url,
+          provider = EXCLUDED.provider,
+          last_login_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+        RETURNING
+          id,
+          firebase_uid,
+          email,
+          display_name,
+          photo_url,
+          provider,
+          role,
+          status,
+          last_login_at,
+          created_at,
+          updated_at
+      `, [firebase_uid, email, display_name, photo_url, provider]);
+        const row = userResult?.rows?.[0];
+        if (!row) {
             result.success = false;
-            result.msg = "!error. username or password is required";
+            result.msg = "login register failed";
             return c.json(result);
         }
-        let _data = await db.query(`
-        SELECT * FROM t_user WHERE username = $1;
-        `, [username]);
-        if (!_data?.rows?.length) {
-            result.success = false;
-            result.msg = "!error. user not found";
-            return c.json(result);
-        }
-        _data = _data.rows[0];
-        let isMatch = await comparePassword(password, _data?.password);
-        if (!isMatch) {
-            result.success = false;
-            result.msg = "!error. invalid password";
-            return c.json(result);
-        }
-        _data.password = "";
-        const token = `Bearer ${generateToken(_data, "999d")}`;
-        console.log(`token: `, token);
-        result.data = { userInfo: _data, token: token };
+        const data = {
+            id: row.id,
+            firebase_uid: row.firebase_uid,
+            email: row.email,
+            display_name: row.display_name,
+            photo_url: row.photo_url,
+            provider: row.provider,
+            role: row.role,
+            status: row.status,
+            last_login_at: toIsoString(row.last_login_at),
+            created_at: toIsoString(row.created_at),
+            updated_at: toIsoString(row.updated_at),
+        };
+        const access_token = generateToken(data);
+        result.data = {
+            access_token,
+            user: data,
+        };
         return c.json(result);
     }
     catch (error) {
