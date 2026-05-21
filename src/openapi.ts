@@ -114,6 +114,17 @@ export const openApiSpec = {
         summary: "Register user",
         requestBody: {
           content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["username", "password"],
+                properties: {
+                  username: { type: "string" },
+                  password: { type: "string", format: "password" },
+                  display_name: { type: "string" },
+                },
+              },
+            },
             "multipart/form-data": {
               schema: {
                 type: "object",
@@ -121,6 +132,7 @@ export const openApiSpec = {
                 properties: {
                   username: { type: "string" },
                   password: { type: "string", format: "password" },
+                  display_name: { type: "string" },
                 },
               },
             },
@@ -129,19 +141,42 @@ export const openApiSpec = {
         responses: { "200": { description: "OK" } },
       },
     },
-    "/api/user/login": {
+    "/api/user/db_select_test": {
+      get: {
+        tags: ["User"],
+        summary: "User router database SELECT NOW test",
+        responses: { "200": { description: "OK" } },
+      },
+    },
+    "/api/user/login_register": {
       post: {
         tags: ["User"],
-        summary: "Login user",
+        summary: "Login or register Firebase user",
         requestBody: {
           content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["firebase_uid", "email"],
+                properties: {
+                  provider: { type: "string", example: "google" },
+                  firebase_uid: { type: "string" },
+                  email: { type: "string", format: "email" },
+                  display_name: { type: "string" },
+                  photo_url: { type: "string", format: "uri" },
+                },
+              },
+            },
             "multipart/form-data": {
               schema: {
                 type: "object",
-                required: ["username", "password"],
+                required: ["firebase_uid", "email"],
                 properties: {
-                  username: { type: "string" },
-                  password: { type: "string", format: "password" },
+                  provider: { type: "string", example: "google" },
+                  firebase_uid: { type: "string" },
+                  email: { type: "string", format: "email" },
+                  display_name: { type: "string" },
+                  photo_url: { type: "string", format: "uri" },
                 },
               },
             },

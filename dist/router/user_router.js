@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { generateToken } from "../utils/utils.js";
+import { generateToken, hashPassword } from "../utils/utils.js";
 const router = new Hono();
 const valueToString = (value) => {
     if (value === undefined || value === null) {
@@ -30,6 +30,75 @@ router.get("/db_select_test", async (c) => {
         SELECT NOW();
         `, []);
         result.data = _data;
+        return c.json(result);
+    }
+    catch (error) {
+        result.success = false;
+        result.msg = `!error. ${error?.message}`;
+        return c.json(result);
+    }
+});
+router.post("/register", async (c) => {
+    let result = { success: true };
+    const db = c.var.db;
+    try {
+        const contentType = c.req.header("content-type") || "";
+        const body = contentType.includes("application/json")
+            ? await c.req.json()
+            : await c.req.parseBody({ all: true });
+        const username = valueToString(body["username"]);
+        const password = valueToString(body["password"]);
+        const display_name = valueToString(body["display_name"]);
+        if (!username || !password) {
+            result.success = false;
+            result.msg = "데이터들 안보냄";
+            return c.json(result);
+        }
+        let existUser = await db.query(`
+      SELECT * FROM t_user WHERE username=$1
+      LIMIT 1
+      `, [username]);
+        existUser = existUser?.rows?.[0];
+        console.log(`# existUser: `, existUser);
+        if (existUser?.id) {
+            result.success = false;
+            result.msg = "이미 있는 회원";
+            return c.json(result);
+        }
+        const hashedPassword = await hashPassword(password);
+        const userResult = await db.query(`
+        INSERT INTO t_user (
+         username,
+         password,
+         display_name
+        )
+        VALUES (
+          $1,
+          $2,
+          NULLIF($3, '')
+        )
+        RETURNING
+          id,
+          username,
+          display_name
+      `, [username, hashedPassword, display_name]);
+        const row = userResult?.rows?.[0];
+        if (!row) {
+            result.success = false;
+            result.msg = "login register failed";
+            return c.json(result);
+        }
+        const data = {
+            id: row?.id,
+            username: row?.username,
+            display_name: row?.display_name,
+        };
+        console.log(`# after insert data: `, data);
+        const access_token = generateToken(data);
+        result.data = {
+            access_token,
+            user: data,
+        };
         return c.json(result);
     }
     catch (error) {
