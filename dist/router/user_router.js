@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { generateToken, hashPassword } from "../utils/utils.js";
+import { generateToken, hashPassword, comparePassword, } from "../utils/utils.js";
 const router = new Hono();
 const valueToString = (value) => {
     if (value === undefined || value === null) {
@@ -92,6 +92,57 @@ router.post("/register", async (c) => {
             id: row?.id,
             username: row?.username,
             display_name: row?.display_name,
+        };
+        console.log(`# after insert data: `, data);
+        const access_token = generateToken(data);
+        result.data = {
+            access_token,
+            user: data,
+        };
+        return c.json(result);
+    }
+    catch (error) {
+        result.success = false;
+        result.msg = `!error. ${error?.message}`;
+        return c.json(result);
+    }
+});
+router.post("/login", async (c) => {
+    let result = { success: true };
+    const db = c.var.db;
+    try {
+        const contentType = c.req.header("content-type") || "";
+        const body = contentType.includes("application/json")
+            ? await c.req.json()
+            : await c.req.parseBody({ all: true });
+        const username = valueToString(body["username"]);
+        const password = valueToString(body["password"]);
+        if (!username || !password) {
+            result.success = false;
+            result.msg = "데이터들 안보냄";
+            return c.json(result);
+        }
+        let existUser = await db.query(`
+      SELECT * FROM t_user WHERE username=$1
+      LIMIT 1
+      `, [username]);
+        existUser = existUser?.rows?.[0];
+        console.log(`# existUser: `, existUser);
+        if (!existUser?.id) {
+            result.success = false;
+            result.msg = "없는 회원";
+            return c.json(result);
+        }
+        const bPassCheck = await comparePassword(password, existUser?.password || "");
+        if (!bPassCheck) {
+            result.success = false;
+            result.msg = "비번 틀림";
+            return c.json(result);
+        }
+        const data = {
+            id: existUser?.id,
+            username: existUser?.username,
+            display_name: existUser?.display_name,
         };
         console.log(`# after insert data: `, data);
         const access_token = generateToken(data);

@@ -148,6 +148,37 @@ export const openApiSpec = {
         responses: { "200": { description: "OK" } },
       },
     },
+    "/api/user/login": {
+      post: {
+        tags: ["User"],
+        summary: "Login user",
+        requestBody: {
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["username", "password"],
+                properties: {
+                  username: { type: "string" },
+                  password: { type: "string", format: "password" },
+                },
+              },
+            },
+            "multipart/form-data": {
+              schema: {
+                type: "object",
+                required: ["username", "password"],
+                properties: {
+                  username: { type: "string" },
+                  password: { type: "string", format: "password" },
+                },
+              },
+            },
+          },
+        },
+        responses: { "200": { description: "OK" } },
+      },
+    },
     "/api/user/login_register": {
       post: {
         tags: ["User"],
