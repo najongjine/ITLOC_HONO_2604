@@ -31,17 +31,24 @@ const toIsoString = (value: unknown): string | null => {
   return String(value);
 };
 
-router.get("/db_select_test", async (c) => {
+router.get("/get_user_list", async (c) => {
   let result: ResultType = { success: true };
   const db = c.var.db;
   try {
     let _data = await db.query(
       `
-        SELECT NOW();
+        SELECT
+        id,
+        username,
+        display_name,
+        created_at
+        FROM t_user
+        ORDER BY display_name
+        LIMIT 1000
         `,
       [],
     );
-    result.data = _data;
+    result.data = _data?.rows || [];
     return c.json(result);
   } catch (error: any) {
     result.success = false;
