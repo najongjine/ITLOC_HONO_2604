@@ -1,0 +1,29 @@
+
+t_chat_message	id	NULL
+t_chat_message	room_id	NULL
+t_chat_message	sender_user_id	NULL
+t_chat_message	message	NULL
+t_chat_message	message_type	"'text', 'image', 'file', 'system'"
+t_chat_message	created_at	NULL
+t_chat_room	id	NULL
+t_chat_room	room_type	direct=1:1, group=채팅방
+t_chat_room	title	NULL
+t_chat_room	created_at	NULL
+t_chat_room_member	id	NULL
+t_chat_room_member	room_id	NULL
+t_chat_room_member	user_id	NULL
+t_chat_room_member	joined_at	NULL
+t_chat_room_member	last_read_message_id	NULL
+t_user	id	NULL
+t_user	firebase_uid	NULL
+t_user	email	NULL
+t_user	display_name	NULL
+t_user	photo_url	NULL
+t_user	provider	NULL
+t_user	role	사용자 권한. USER: 일반 사용자, SELLER: 판매자, MASTER: 최고 관리자
+t_user	status	계정 상태. ACTIVE: 정상 사용, BLOCKED: 차단됨, DELETED: 탈퇴 또는 삭제됨
+t_user	last_login_at	NULL
+t_user	created_at	NULL
+t_user	updated_at	NULL
+t_user	username	NULL
+t_user	password	NULL
