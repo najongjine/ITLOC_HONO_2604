@@ -111,10 +111,6 @@ const io = new Server(httpServer, {
   },
 });
 
-// 임시 메모리 저장소
-// 서버 재시작하면 사라짐
-const chatMessages: ChatMessageType[] = [];
-let messageId = 1;
 /* 이벤트 기반 
 socket := 앱socket정보 */
 io.on("connection", (socket) => {
@@ -123,15 +119,9 @@ io.on("connection", (socket) => {
   /* 1:1 채팅 시작하면, 여기서 방 만들고, 유저들 가입 시키기 */
   socket.on(
     "join_room",
-    async (data: {
-      roomId?: string;
-      userId: string;
-      receiverId?: string;
-      userIds?: string[];
-      roomType?: "direct" | "group";
-      title?: string;
-    }) => {
+    async (data: { userId: string | number; receiverId: string | number }) => {
       if (!socketDbPool) {
+        console.error(`!DATABASE_URL is missing`);
         socket.emit("joined_room", {
           success: false,
           msg: "DATABASE_URL is missing",
@@ -140,137 +130,180 @@ io.on("connection", (socket) => {
       }
 
       const userId = Number(data?.userId);
-      const roomId = data?.roomId ? Number(data.roomId) : null;
-      const inviteUserIds = [
-        userId,
-        Number(data?.receiverId),
-        ...(data?.userIds ?? []).map((id) => Number(id)),
-      ].filter((id, index, ids) => {
-        return Number.isInteger(id) && id > 0 && ids.indexOf(id) == index;
-      });
+      const receiverId = Number(data?.receiverId);
+      console.log(`# join_room on. ${userId},${receiverId}`);
 
-      if (!Number.isInteger(userId) || userId <= 0) {
+      // 1. 기본 값 검증
+      if (
+        !Number.isInteger(userId) ||
+        userId <= 0 ||
+        !Number.isInteger(receiverId) ||
+        receiverId <= 0
+      ) {
         socket.emit("joined_room", {
           success: false,
-          msg: "userId is invalid",
+          msg: "userId 또는 receiverId가 잘못되었습니다.",
         });
         return;
       }
 
-      const roomType = data?.roomType == "group" ? "group" : "direct";
+      // 2. 자기 자신과 채팅 방지
+      if (userId === receiverId) {
+        socket.emit("joined_room", {
+          success: false,
+          msg: "자기 자신과는 1:1 채팅방을 만들 수 없습니다.",
+        });
+        return;
+      }
+
       let client: any = null;
+
       try {
         client = await socketDbPool.connect();
         await client.query("BEGIN");
 
-        let joinedRoom: any = null;
-        // 클라가 방 id 줬을때
-        if (roomId && Number.isInteger(roomId) && roomId > 0) {
-          const roomResult = await client.query(
-            `
-              SELECT id, room_type, title, created_at
-              FROM t_chat_room
-              WHERE id = $1
-              LIMIT 1
-            `,
-            [roomId],
-          );
-          joinedRoom = roomResult?.rows?.[0];
+        /**
+         * 3. 유저 존재 확인
+         *
+         * 주의:
+         * status = 'ACTIVE' 조건은 일부러 뺐음.
+         * 네 DB에서 기존 유저 status가 NULL이면 여기서 터질 수 있기 때문.
+         */
+        const userResult = await client.query(
+          `
+          SELECT id
+          FROM t_user
+          WHERE id IN ($1, $2)
+        `,
+          [userId, receiverId],
+        );
 
-          if (!joinedRoom) {
-            throw new Error("chat room not found");
-          }
-        } else if (roomType == "direct" && inviteUserIds.length == 2) {
-          //  1:1 채팅 전용. 클라가 roomid 없이 없이 1:1 채팅을 처음 시작하려고 할 때예요.
-          const roomResult = await client.query(
-            `
-              SELECT r.id, r.room_type, r.title, r.created_at
-              FROM t_chat_room r
-              JOIN t_chat_room_member m ON m.room_id = r.id
-              WHERE r.room_type = 'direct'
-              GROUP BY r.id, r.room_type, r.title, r.created_at
-              HAVING
-                COUNT(DISTINCT m.user_id) = 2
-                AND COUNT(DISTINCT CASE
-                  WHEN m.user_id = ANY($1::int[]) THEN m.user_id
-                END) = 2
-              LIMIT 1
-            `,
-            [inviteUserIds],
-          );
-          joinedRoom = roomResult?.rows?.[0];
-
-          if (!joinedRoom) {
-            const insertRoomResult = await client.query(
-              `
-                INSERT INTO t_chat_room (
-                  room_type,
-                  title
-                )
-                VALUES (
-                  $1,
-                  NULLIF($2, '')
-                )
-                RETURNING id, room_type, title, created_at
-              `,
-              [roomType, data?.title?.trim() ?? ""],
-            );
-            joinedRoom = insertRoomResult?.rows?.[0];
-          }
-        } else {
-          // 그 외 새 방 만들기. 그룹방. 유저가 3명 이상
-          const roomResult = await client.query(
-            `
-              INSERT INTO t_chat_room (
-                room_type,
-                title
-              )
-              VALUES (
-                $1,
-                NULLIF($2, '')
-              )
-              RETURNING id, room_type, title, created_at
-            `,
-            [roomType, data?.title?.trim() ?? ""],
-          );
-          joinedRoom = roomResult?.rows?.[0];
+        if (userResult.rows.length !== 2) {
+          throw new Error("존재하지 않는 유저가 포함되어 있습니다.");
         }
 
-        for (const memberUserId of inviteUserIds) {
-          await client.query(
+        /**
+         * 4. 이미 두 사람이 들어가 있는 direct 방 찾기
+         *
+         * 핵심:
+         * - room_type = 'direct'
+         * - 멤버가 정확히 2명
+         * - 그 2명이 userId, receiverId
+         */
+        const findRoomResult = await client.query(
+          `
+          SELECT
+            r.id,
+            r.room_type,
+            r.title,
+            r.created_at
+          FROM t_chat_room r
+          JOIN t_chat_room_member m
+            ON m.room_id = r.id
+          WHERE r.room_type = 'direct'
+          GROUP BY
+            r.id,
+            r.room_type,
+            r.title,
+            r.created_at
+          HAVING
+            COUNT(DISTINCT m.user_id) = 2
+            AND COUNT(DISTINCT CASE
+              WHEN m.user_id IN ($1, $2)
+              THEN m.user_id
+            END) = 2
+          LIMIT 1
+        `,
+          [userId, receiverId],
+        );
+
+        let room = findRoomResult.rows[0];
+
+        /**
+         * 5. 기존 방이 없으면 새 방 생성
+         */
+        if (!room) {
+          const insertRoomResult = await client.query(
             `
-              INSERT INTO t_chat_room_member (
-                room_id,
-                user_id
-              )
-              VALUES (
-                $1,
-                $2
-              )
-              ON CONFLICT (room_id, user_id)
-              DO NOTHING
-            `,
-            [joinedRoom.id, memberUserId],
+            INSERT INTO t_chat_room (
+              room_type,
+              title,
+              created_at
+            )
+            VALUES (
+              'direct',
+              NULL,
+              NOW()
+            )
+            RETURNING
+              id,
+              room_type,
+              title,
+              created_at
+          `,
           );
+
+          room = insertRoomResult.rows[0];
         }
+
+        /**
+         * 6. 채팅방 멤버 등록
+         *
+         * ON CONFLICT를 쓰려면 DB에 아래 제약조건이 있어야 함:
+         *
+         * UNIQUE (room_id, user_id)
+         */
+        await client.query(
+          `
+          INSERT INTO t_chat_room_member (
+            room_id,
+            user_id,
+            joined_at
+          )
+          VALUES
+            ($1, $2, NOW()),
+            ($1, $3, NOW())
+          ON CONFLICT (room_id, user_id)
+          DO NOTHING
+        `,
+          [room.id, userId, receiverId],
+        );
 
         await client.query("COMMIT");
 
-        const socketRoomId = String(joinedRoom.id);
-        socket.join(socketRoomId);
-        console.log(`# socket, ${userId} join room ${socketRoomId}`);
+        const roomId = String(room.id);
+
+        /**
+         * 7. 현재 접속한 socket을 socket.io 방에 입장시킴
+         */
+        socket.join(roomId);
+
+        console.log(
+          `[socket.io] direct room joined. userId=${userId}, receiverId=${receiverId}, roomId=${roomId}`,
+        );
+
+        /**
+         * 8. 클라이언트에게 roomId 반환
+         */
         socket.emit("joined_room", {
           success: true,
-          roomId: socketRoomId,
+          roomId,
+          room,
           userId: String(userId),
-          room: joinedRoom,
-          memberUserIds: inviteUserIds.map((id) => String(id)),
+          receiverId: String(receiverId),
+          memberUserIds: [String(userId), String(receiverId)],
         });
       } catch (error: any) {
         if (client) {
-          await client.query("ROLLBACK");
+          try {
+            await client.query("ROLLBACK");
+          } catch (rollbackError) {
+            console.error("[socket.io] rollback failed:", rollbackError);
+          }
         }
-        console.error(`[socket.io] join_room failed:`, error);
+
+        console.error("[socket.io] join_room failed:", error);
+
         socket.emit("joined_room", {
           success: false,
           msg: error?.message ?? "join_room failed",
@@ -283,8 +316,6 @@ io.on("connection", (socket) => {
 
   socket.on("get_messages", (data: { roomId: string }) => {
     const { roomId } = data;
-    const roomMessages = chatMessages.filter((msg) => msg.roomId == roomId);
-    socket.emit(`message_list`, roomMessages);
   });
 
   socket.on(
@@ -302,18 +333,6 @@ io.on("connection", (socket) => {
         });
         return;
       }
-      const newMessage: ChatMessageType = {
-        id: messageId++,
-        roomId,
-        senderId,
-        receiverId,
-        text: text.trim(),
-        createdDt: new Date().toISOString(),
-      };
-      chatMessages.push(newMessage);
-      console.log("# new message:", newMessage);
-      // 같은 방에 있는 모든 사람에게 메시지 전송
-      io.to(roomId).emit("receive_message", newMessage);
     },
   );
 
