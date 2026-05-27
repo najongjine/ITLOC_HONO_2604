@@ -314,24 +314,221 @@ io.on("connection", (socket) => {
     },
   );
 
-  socket.on("get_messages", (data: { roomId: string }) => {
-    const { roomId } = data;
+  socket.on("get_messages", async (data: { roomId: string }) => {
+    if (!socketDbPool) {
+      socket.emit("chat_error", {
+        message: "DATABASE_URL is missing",
+      });
+      return;
+    }
+
+    const roomId = Number(data?.roomId);
+
+    if (!Number.isInteger(roomId) || roomId <= 0) {
+      socket.emit("chat_error", {
+        message: "roomId가 잘못되었습니다.",
+      });
+      return;
+    }
+
+    try {
+      const result = await socketDbPool.query(
+        `
+        SELECT
+          id,
+          room_id,
+          sender_user_id,
+          message,
+          message_type,
+          created_at
+        FROM t_chat_message
+        WHERE room_id = $1
+        ORDER BY id ASC
+        `,
+        [roomId],
+      );
+
+      const messageList = result.rows.map((row: any) => {
+        return {
+          id: row.id,
+          roomId: String(row.room_id),
+          senderId: String(row.sender_user_id),
+          recieverId: "",
+          text: row.message,
+          createdDt: row.created_at,
+          messageType: row.message_type,
+        };
+      });
+
+      socket.emit("message_list", messageList);
+    } catch (error: any) {
+      console.error("[socket.io] get_messages failed:", error);
+
+      socket.emit("chat_error", {
+        message: error?.message ?? "get_messages failed",
+      });
+    }
   });
 
   socket.on(
     "send_message",
-    (data: {
-      roomId: string;
-      senderId: string;
-      receiverId: string;
+    async (data: {
+      roomId: string | number;
+      senderId: string | number;
+      receiverId: string | number;
       text: string;
     }) => {
-      const { roomId, senderId, receiverId, text } = data;
-      if (!roomId || !senderId || !receiverId) {
-        socket.emit(`chat_error`, {
-          messages: "데이터들 잘못보냄",
+      if (!socketDbPool) {
+        socket.emit("chat_error", {
+          message: "DATABASE_URL is missing",
         });
         return;
+      }
+
+      const roomId = Number(data?.roomId);
+      const senderId = Number(data?.senderId);
+      const receiverId = Number(data?.receiverId);
+      const text = String(data?.text || "").trim();
+
+      // 1. 기본 검증
+      if (
+        !Number.isInteger(roomId) ||
+        roomId <= 0 ||
+        !Number.isInteger(senderId) ||
+        senderId <= 0 ||
+        !Number.isInteger(receiverId) ||
+        receiverId <= 0
+      ) {
+        socket.emit("chat_error", {
+          message: "roomId, senderId, receiverId 중 잘못된 값이 있습니다.",
+        });
+        return;
+      }
+
+      if (!text) {
+        socket.emit("chat_error", {
+          message: "메시지 내용이 비어 있습니다.",
+        });
+        return;
+      }
+
+      if (text.length > 2000) {
+        socket.emit("chat_error", {
+          message: "메시지는 2000자 이하로 입력해주세요.",
+        });
+        return;
+      }
+
+      let client: any = null;
+
+      try {
+        client = await socketDbPool.connect();
+        await client.query("BEGIN");
+
+        // 2. 방 존재 확인
+        const roomResult = await client.query(
+          `
+          SELECT id, room_type
+          FROM t_chat_room
+          WHERE id = $1
+        `,
+          [roomId],
+        );
+
+        if (roomResult.rows.length === 0) {
+          throw new Error("존재하지 않는 채팅방입니다.");
+        }
+
+        // 3. sender, receiver가 둘 다 이 방의 멤버인지 확인
+        const memberResult = await client.query(
+          `
+          SELECT user_id
+          FROM t_chat_room_member
+          WHERE room_id = $1
+            AND user_id IN ($2, $3)
+        `,
+          [roomId, senderId, receiverId],
+        );
+
+        if (memberResult.rows.length !== 2) {
+          throw new Error("채팅방 멤버가 아닌 사용자가 포함되어 있습니다.");
+        }
+
+        // 4. 메시지 저장
+        const insertMessageResult = await client.query(
+          `
+          INSERT INTO t_chat_message (
+            room_id,
+            sender_user_id,
+            message,
+            message_type,
+            created_at
+          )
+          VALUES (
+            $1,
+            $2,
+            $3,
+            'text',
+            NOW()
+          )
+          RETURNING
+            id,
+            room_id,
+            sender_user_id,
+            message,
+            message_type,
+            created_at
+        `,
+          [roomId, senderId, text],
+        );
+
+        const savedMessage = insertMessageResult.rows[0];
+
+        // 5. 읽음 처리: 보낸 사람은 방금 보낸 메시지까지 읽은 것으로 처리
+        await client.query(
+          `
+          UPDATE t_chat_room_member
+          SET last_read_message_id = $1
+          WHERE room_id = $2
+            AND user_id = $3
+        `,
+          [savedMessage.id, roomId, senderId],
+        );
+
+        await client.query("COMMIT");
+
+        // 6. 프론트 ChatMessageType 모양으로 변환
+        const responseMessage = {
+          id: savedMessage.id,
+          roomId: String(savedMessage.room_id),
+          senderId: String(savedMessage.sender_user_id),
+          recieverId: String(receiverId),
+          text: savedMessage.message,
+          createdDt: savedMessage.created_at,
+          messageType: savedMessage.message_type,
+        };
+
+        // 7. 같은 roomId에 들어와 있는 socket들에게 전송
+        io.to(String(roomId)).emit("receive_message", responseMessage);
+      } catch (error: any) {
+        if (client) {
+          try {
+            await client.query("ROLLBACK");
+          } catch (rollbackError) {
+            console.error(
+              "[socket.io] send_message rollback failed:",
+              rollbackError,
+            );
+          }
+        }
+
+        console.error("[socket.io] send_message failed:", error);
+
+        socket.emit("chat_error", {
+          message: error?.message ?? "send_message failed",
+        });
+      } finally {
+        client?.release();
       }
     },
   );
