@@ -339,7 +339,11 @@ io.on("connection", (socket) => {
           room_id,
           sender_user_id,
           message,
-          message_type,
+          CASE
+            WHEN tarot_card_id IS NOT NULL THEN 'tarot'
+            ELSE message_type
+          END AS message_type,
+          tarot_card_id,
           created_at
         FROM t_chat_message
         WHERE room_id = $1
@@ -348,7 +352,7 @@ io.on("connection", (socket) => {
         [roomId],
       );
 
-      const messageList = result.rows.map((row: any) => {
+      const messageList: ChatMessageType[] = result.rows.map((row: any) => {
         return {
           id: row.id,
           roomId: String(row.room_id),
@@ -357,6 +361,7 @@ io.on("connection", (socket) => {
           text: row.message,
           createdDt: row.created_at,
           messageType: row.message_type,
+          tarotCardId: row.tarot_card_id,
         };
       });
 
@@ -377,6 +382,7 @@ io.on("connection", (socket) => {
       senderId: string | number;
       receiverId: string | number;
       text: string;
+      tarotCardId?: string | null;
     }) => {
       if (!socketDbPool) {
         socket.emit("chat_error", {
@@ -389,6 +395,9 @@ io.on("connection", (socket) => {
       const senderId = Number(data?.senderId);
       const receiverId = Number(data?.receiverId);
       const text = String(data?.text || "").trim();
+      const tarotCardId = String(data?.tarotCardId || "").trim();
+      console.log(`# roomId: `, roomId);
+      console.log(`# text: `, text);
 
       // 1. 기본 검증
       if (
@@ -405,9 +414,9 @@ io.on("connection", (socket) => {
         return;
       }
 
-      if (!text) {
+      if (!text && !tarotCardId) {
         socket.emit("chat_error", {
-          message: "메시지 내용이 비어 있습니다.",
+          message: "메시지 또는 타로카드가 필요합니다.",
         });
         return;
       }
@@ -462,6 +471,7 @@ io.on("connection", (socket) => {
             sender_user_id,
             message,
             message_type,
+            tarot_card_id,
             created_at
           )
           VALUES (
@@ -469,6 +479,7 @@ io.on("connection", (socket) => {
             $2,
             $3,
             'text',
+            $4,
             NOW()
           )
           RETURNING
@@ -476,10 +487,14 @@ io.on("connection", (socket) => {
             room_id,
             sender_user_id,
             message,
-            message_type,
+            CASE
+              WHEN tarot_card_id IS NOT NULL THEN 'tarot'
+              ELSE message_type
+            END AS message_type,
+            tarot_card_id,
             created_at
         `,
-          [roomId, senderId, text],
+          [roomId, senderId, text, tarotCardId || null],
         );
 
         const savedMessage = insertMessageResult.rows[0];
@@ -498,7 +513,7 @@ io.on("connection", (socket) => {
         await client.query("COMMIT");
 
         // 6. 프론트 ChatMessageType 모양으로 변환
-        const responseMessage = {
+        const responseMessage: ChatMessageType = {
           id: savedMessage.id,
           roomId: String(savedMessage.room_id),
           senderId: String(savedMessage.sender_user_id),
@@ -506,6 +521,7 @@ io.on("connection", (socket) => {
           text: savedMessage.message,
           createdDt: savedMessage.created_at,
           messageType: savedMessage.message_type,
+          tarotCardId: savedMessage.tarot_card_id,
         };
 
         // 7. 같은 roomId에 들어와 있는 socket들에게 전송
